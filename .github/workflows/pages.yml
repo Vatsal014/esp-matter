@@ -38,11 +38,18 @@ jobs:
           cd /opt/esp-idf
           ./install.sh
           echo "IDF_PATH=/opt/esp-idf" >> $GITHUB_ENV
-
-      - name: Clone ESP-Matter
+      - name: Free up disk space
         run: |
-          git clone --recursive --depth 1 https://github.com/espressif/esp-matter.git /opt/esp-matter
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          docker system prune -af
+
+      - name: Clone ESP-Matter (Shallow Clone)
+        run: |
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-matter.git /opt/esp-matter
           echo "ESP_MATTER_PATH=/opt/esp-matter" >> $GITHUB_ENV
+      
 
       - name: Build application
         run: |
