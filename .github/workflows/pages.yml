@@ -1,10 +1,12 @@
 name: Build Examples
 
 on:
-  workflow_run:
-    workflows: ["Build Docker"]
-    types: [completed]
-
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
