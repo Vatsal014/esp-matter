@@ -1,4 +1,4 @@
-name: Build Examples
+name: Build ESP-Matter Light (ESP32C6 Thread)
 
 on:
   push:
@@ -30,6 +30,14 @@ jobs:
           - {example: light, target: esp32c6, prefix: thread_matter, sdkconfig: sdkconfig.defaults.c6_thread}
 
     steps:
+      - name: Free Up Disk Space
+        run: |
+          echo "Freeing up disk space..."
+          sudo apt-get clean
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/node_modules
+          df -h
+
       - name: Install Dependencies
         run: |
           apt-get update && apt-get install -y git wget flex bison python3 python3-pip cmake ninja-build
@@ -38,42 +46,40 @@ jobs:
         run: |
           git clone --recursive --depth 1 https://github.com/espressif/esp-idf.git /opt/esp-idf
           cd /opt/esp-idf
+          git checkout v5.3
           ./install.sh
           echo "IDF_PATH=/opt/esp-idf" >> $GITHUB_ENV
 
-
-      - name: Clone ESP-Matter 
+      - name: Clone ESP-Matter (Optimized)
         run: |
-          git clone --recursive --depth 1 https://github.com/espressif/esp-matter.git /opt/esp-matter
+          git clone --depth 1 https://github.com/espressif/esp-matter.git /opt/esp-matter
+          cd /opt/esp-matter
+          git submodule update --init --recursive --depth 1 --no-fetch third_party/connectedhomeip
           echo "ESP_MATTER_PATH=/opt/esp-matter" >> $GITHUB_ENV
-      
 
-      - name: Build application
+      - name: Build Application
         run: |
           source $IDF_PATH/export.sh
           cd $ESP_MATTER_PATH/examples/${{ matrix.targets.example }}
-
-          if [ "${{ matrix.targets.sdkconfig }}" != "" ]; then
-            idf.py -D SDKCONFIG_DEFAULTS="${{ matrix.targets.sdkconfig }}" set-target ${{ matrix.targets.target }} build
-          else
-            idf.py set-target ${{ matrix.targets.target }} build
+          if [ -f "${{ matrix.targets.sdkconfig }}" ]; then
+            cp "${{ matrix.targets.sdkconfig }}" sdkconfig
           fi
-
+          idf.py set-target ${{ matrix.targets.target }} build
           cd build
-
           TARGET_CHIP=$(cat project_description.json | python3 -c 'import sys,json; print(json.load(sys.stdin)["target"])')
           APP_BIN=$(cat project_description.json | python3 -c 'import sys,json; print(json.load(sys.stdin)["app_bin"])')
           OUT_BIN="$GITHUB_WORKSPACE/images/$TARGET_CHIP"_${{ matrix.targets.prefix }}_"$APP_BIN"
           esptool.py --chip $TARGET_CHIP merge_bin -o $OUT_BIN $(cat flash_args | tr '\n' ' ')
 
-      - name: Upload artifact
+      - name: Upload Firmware Artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           include-hidden-files: true
           name: build-images-${{ matrix.targets.target }}-${{ matrix.targets.prefix }}-${{ matrix.targets.example }}
           path: images/
 
-  deploy:
+  Deploy:
     needs:
       - Build-Matter
     environment:
@@ -84,7 +90,7 @@ jobs:
       image: espressif/esp-matter:latest
 
     steps:
-      - name: Download builds
+      - name: Download Builds
         uses: actions/download-artifact@v4
         with:
           pattern: build-images-*
@@ -100,7 +106,7 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: images/
