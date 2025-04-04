@@ -1,5 +1,3 @@
-
-
 name: Build Docker
 
 on:
@@ -10,7 +8,6 @@ on:
     tags:
       - 'v*.*'
 
-  # Can be run manually
   workflow_dispatch:
 
 env:
@@ -19,44 +16,43 @@ env:
 
 jobs:
   build:
-    # Disable the job in forks
     if: ${{ github.repository_owner == 'Vatsal014' }}
-
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # Prevents premature cancellation
+
     strategy:
       fail-fast: true
       matrix:
-        # Platforms to build the image for
-        # Using a separate runner for each image to work around space issues on a single runner
         platform:
           - linux/amd64
           - linux/arm64
 
     steps:
-      # Workaround for disk space issues on the GitHub runner
-      - run: sudo rm -rf /usr/share/dotnet
-      - run: sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          docker system prune -af
 
-      # The following steps are the standard boilerplate from
-      # https://docs.docker.com/build/ci/github-actions/multi-platform/
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Prepare artifact name
+      - name: Clone ESP-Matter (Shallow)
+        run: |
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-matter.git /opt/esp-matter
+          echo "ESP_MATTER_PATH=/opt/esp-matter" >> $GITHUB_ENV
+
+      - name: Prepare Artifact Name
         run: |
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKERHUB_REPO }}
-
-      - name: Set up QEMU
+      - name: Set Up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
+      - name: Set Up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
@@ -65,26 +61,25 @@ jobs:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push by digest
+      - name: Build and Push Docker Image
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: tools/docker/matter_builds
-          labels: ${{ steps.meta.outputs.labels }}
+          context: .
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.DOCKERHUB_REPO }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.DOCKERHUB_REPO }},push-by-digest=true,push=true
           build-args: |
             ESP_MATTER_CLONE_URL=${{ github.server_url }}/${{ github.repository }}.git
             ESP_MATTER_CHECKOUT_REF=${{ github.ref_name }}
             IDF_CHECKOUT_REF=${{ env.REQUIRED_IDF_VERSION }}
 
-      - name: Export digest
+      - name: Export Digest
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
-      - name: Upload digest
+      - name: Upload Digest
         uses: actions/upload-artifact@v4
         with:
           name: digests-${{ env.PLATFORM_PAIR }}
@@ -96,34 +91,31 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build
-    steps:
-      # Depending on the branch/tag, set TAG_NAME (used when tagging the image).
-      #
-      # The following 3 steps cover the alternatives (tag, release branch, main branch):
-      - name: Set variables (tags)
-        if: ${{ github.ref_type == 'tag' }}
-        run: |
-          echo "TAG_NAME=$GITHUB_REF_NAME" >> $GITHUB_ENV
-      - name: Set variables (release branches)
-        if: ${{ github.ref_type == 'branch' && startsWith(github.ref_name, 'release/') }}
-        run: |
-          echo "TAG_NAME=release-${GITHUB_REF_NAME##release/}" >> $GITHUB_ENV
-      - name: Set variables (main branch)
-        if: ${{ github.ref_type == 'branch' && github.ref_name == 'main' }}
-        run: |
-          echo "TAG_NAME=latest" >> $GITHUB_ENV
 
-      - name: Download digests
+    steps:
+      - name: Set Tag Name (For Tags)
+        if: ${{ github.ref_type == 'tag' }}
+        run: echo "TAG_NAME=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
+      - name: Set Tag Name (For Release Branches)
+        if: ${{ github.ref_type == 'branch' && startsWith(github.ref_name, 'release/') }}
+        run: echo "TAG_NAME=release-${GITHUB_REF_NAME##release/}" >> $GITHUB_ENV
+
+      - name: Set Tag Name (For Main Branch)
+        if: ${{ github.ref_type == 'branch' && github.ref_name == 'main' }}
+        run: echo "TAG_NAME=latest" >> $GITHUB_ENV
+
+      - name: Download Digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
           pattern: digests-*
           merge-multiple: true
 
-      - name: Set up Docker Buildx
+      - name: Set Up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker meta
+      - name: Docker Meta
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -138,12 +130,11 @@ jobs:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Create manifest list and push
+      - name: Create Manifest List and Push
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.DOCKERHUB_REPO }}@sha256:%s ' *) 
+            $(printf '${{ env.DOCKERHUB_REPO }}@sha256:%s ' *)
 
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect ${{ env.DOCKERHUB_REPO }}:${{ steps.meta.outputs.version }}
+      - name: Inspect Image
+        run: docker buildx imagetools inspect ${{ env.DOCKERHUB_REPO }}:${{ steps.meta.outputs.version }}
