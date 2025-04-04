@@ -5,16 +5,13 @@ on:
     workflows: ["Build Docker"]
     types: [completed]
 
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow one concurrent deployment
 concurrency:
   group: "pages"
   cancel-in-progress: true
@@ -24,25 +21,32 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: espressif/esp-matter:latest
+
     strategy:
       matrix:
         targets:
         - {example: light, target: esp32c6, prefix: thread_matter, sdkconfig: sdkconfig.defaults.c6_thread}
 
     steps:
-      - run: mkdir -p images
-      
-      - name: Set Environment Variables
+      - name: Install Dependencies
         run: |
-          export IDF_PATH=/opt/esp-idf
-          export ESP_MATTER_PATH=/opt/esp-matter
-          echo "IDF_PATH=$IDF_PATH" >> $GITHUB_ENV
-          echo "ESP_MATTER_PATH=$ESP_MATTER_PATH" >> $GITHUB_ENV
+          apt-get update && apt-get install -y git wget flex bison python3 python3-pip cmake ninja-build
+
+      - name: Clone & Set Up ESP-IDF
+        run: |
+          git clone --recursive --depth 1 https://github.com/espressif/esp-idf.git /opt/esp-idf
+          cd /opt/esp-idf
+          ./install.sh
+          echo "IDF_PATH=/opt/esp-idf" >> $GITHUB_ENV
+
+      - name: Clone ESP-Matter
+        run: |
+          git clone --recursive --depth 1 https://github.com/espressif/esp-matter.git /opt/esp-matter
+          echo "ESP_MATTER_PATH=/opt/esp-matter" >> $GITHUB_ENV
 
       - name: Build application
         run: |
-          . $IDF_PATH/export.sh
-          . $ESP_MATTER_PATH/export.sh
+          source $IDF_PATH/export.sh
           cd $ESP_MATTER_PATH/examples/${{ matrix.targets.example }}
 
           if [ "${{ matrix.targets.sdkconfig }}" != "" ]; then
@@ -58,14 +62,6 @@ jobs:
           OUT_BIN="$GITHUB_WORKSPACE/images/$TARGET_CHIP"_${{ matrix.targets.prefix }}_"$APP_BIN"
           esptool.py --chip $TARGET_CHIP merge_bin -o $OUT_BIN $(cat flash_args | tr '\n' ' ')
 
-          # Record the esp-idf and esp-matter commit
-          idf_rev=$(git -C $IDF_PATH rev-parse --short HEAD)
-          mtr_rev=$(git -C $ESP_MATTER_PATH rev-parse --short HEAD)
-          chip_rev=$(git -C $ESP_MATTER_PATH/connectedhomeip/connectedhomeip rev-parse --short HEAD)
-          echo "- esp-idf: [$idf_rev](https://github.com/espressif/esp-idf/tree/$idf_rev)" >> $GITHUB_WORKSPACE/images/.esp-idf
-          echo "- esp-matter: [$mtr_rev](https://github.com/espressif/esp-matter/tree/$mtr_rev)" >> $GITHUB_WORKSPACE/images/.esp-matter
-          echo "- connectedhomeip: [$chip_rev](https://github.com/project-chip/connectedhomeip/tree/$chip_rev)" >> $GITHUB_WORKSPACE/images/.chip
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -76,7 +72,6 @@ jobs:
   deploy:
     needs:
       - Build-Matter
-
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -96,14 +91,6 @@ jobs:
         run: |
           cd images/
           $ESP_MATTER_PATH/tools/launchpad/generate_launchpad_config.sh ${{ github.repository_owner }}
-          echo ${{ github.repository_owner }}
-
-          # Put together the commit IDs used when building the firmwares
-          echo "#### Build Config" >> build_cfg.md
-          cat .esp-idf >> build_cfg.md
-          cat .esp-matter >> build_cfg.md
-          cat .chip >> build_cfg.md
-
           tree -H '.' -L 1 --noreport -T 'ESP Matter Launchpad Artifacts' -shi --charset utf-8 -I "index.html" -o index.html
 
       - name: Setup Pages
