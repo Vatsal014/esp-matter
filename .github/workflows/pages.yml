@@ -25,7 +25,7 @@ jobs:
     strategy:
       matrix:
         targets:
-        - {example: light, target: esp32c6, prefix: thread_matter, sdkconfig: sdkconfig.defaults.c6_thread}
+          - {example: light, target: esp32c6, prefix: thread_matter, sdkconfig: sdkconfig.defaults.c6_thread}
 
     steps:
       - name: Install Dependencies
@@ -38,16 +38,11 @@ jobs:
           cd /opt/esp-idf
           ./install.sh
           echo "IDF_PATH=/opt/esp-idf" >> $GITHUB_ENV
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          docker system prune -af
 
-      - name: Clone ESP-Matter (Shallow Clone)
+
+      - name: Clone ESP-Matter 
         run: |
-          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-matter.git /opt/esp-matter
+          git clone --recursive --depth 1 https://github.com/espressif/esp-matter.git /opt/esp-matter
           echo "ESP_MATTER_PATH=/opt/esp-matter" >> $GITHUB_ENV
       
 
